@@ -207,7 +207,7 @@ void* monitorNodeThread(void *arg) {
                 errorCounter = 0;
             }
         }
-        doSleep(reportInterval);
+        doSleep(_reportInterval);
     }
     exit(0);
 }
