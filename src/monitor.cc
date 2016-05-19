@@ -1029,7 +1029,7 @@ static NAN_GETTER(GetterIPCMonitorPath) {
 }
 
 static NAN_GETTER(GetterReportInterval) {
-    info.GetReturnValue().Set(Nan::New<Number>(_reportInterval).ToLocalChecked());
+    info.GetReturnValue().Set(Nan::New<Number>(_reportInterval));
 }
 
 static NAN_GETTER(GetterShowBackTrace) {
