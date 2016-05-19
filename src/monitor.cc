@@ -53,7 +53,8 @@ static bool _show_backtrace = false;  //< default to false for performance
 // However, if there is no receiver on the other end (i.e. sendmsg()
 // returns -1), then the reporting thread will wait MAX_INACTIVITY_RETRIES
 // before trying again.
-static const int REPORT_INTERVAL_MS = 1000;
+static int _reportInterval = 1000;
+// static const int REPORT_INTERVAL_MS = 1000;
 static const int MAX_INACTIVITY_RETRIES = 5;
 
 /* globals used for signal catching, etc */
@@ -109,11 +110,11 @@ static v8::Local<v8::Object> getProcessMonitor() {
 void RegisterSignalHandler(int signal, void (*handler)(int, siginfo_t *, void *)) {
 
     sigset_t blockset;
-    sigemptyset(&blockset);  
+    sigemptyset(&blockset);
     sigaddset(&blockset, SIGHUP);
     // block SIGHUP until we get to pselect() call to avoid race condition
     // See http://lwn.net/Articles/176911/
-    sigprocmask(SIG_BLOCK, &blockset, &savedBlockSet);  
+    sigprocmask(SIG_BLOCK, &blockset, &savedBlockSet);
 
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
@@ -172,7 +173,7 @@ void* monitorNodeThread(void *arg) {
     if (0 != rc) perror("pthread_setname_np");
 
     NodeMonitor& monitor = NodeMonitor::getInstance();
-    doSleep(REPORT_INTERVAL_MS);
+    doSleep(_reportInterval);
     while (true) {
         if (hup_fired) {
             siginfo_t *siginfo = &savedSigInfo;
@@ -206,7 +207,7 @@ void* monitorNodeThread(void *arg) {
                 errorCounter = 0;
             }
         }
-        doSleep(REPORT_INTERVAL_MS);
+        doSleep(reportInterval);
     }
     exit(0);
 }
@@ -341,7 +342,7 @@ void NodeMonitor::Start() {
     InstallGCEventCallbacks();
     InitializeIPC();
 
-    /* Use a pipe to let the signal handler (which will likely be 
+    /* Use a pipe to let the signal handler (which will likely be
        executed in another thread) break out of pselect().
        This is the standard DJ Bernstein pipe for handling signals
        in multi-thread programs technique - http://cr.yp.to/docs/selfpipe.html */
@@ -351,7 +352,7 @@ void NodeMonitor::Start() {
         if (pipe(fd)) {
             perror("Can't create pipe");
         }
-        sigpipefd_r = fd[0]; 
+        sigpipefd_r = fd[0];
         sigpipefd_w = fd[1];
         fcntl(sigpipefd_r, F_SETFL, fcntl(sigpipefd_r, F_GETFL) | O_NONBLOCK );
         fcntl(sigpipefd_r, F_SETFD, FD_CLOEXEC );
@@ -457,7 +458,7 @@ void NodeMonitor::setStatistics() {
         stats_.lastKBytesSecond = (dataTransferred - stats_.lastKBytesTransfered_) / (((double) timeDelta) / 1000);
         stats_.lastKBytesTransfered_ = dataTransferred;
     }
-    
+
     stats_.healthIsDown_ = getBooleanFunction("isDown");
     stats_.healthStatusCode_ = getIntFunction("getStatusCode");
     stats_.healthStatusTimestamp_ = (time_t) getIntFunction("getStatusTimestamp");
@@ -591,7 +592,7 @@ Local<Value> callFunction(const char* funcName) {
         return scope.Escape(result);
     }
     return Nan::Null();
-        
+
 }
 
 
@@ -673,7 +674,7 @@ int NodeMonitor::getIntFunction(const char* funcName) {
     }
     return 0;
 }
-    
+
 // calls a Javascript function which returns a boolean result
 bool NodeMonitor::getBooleanFunction(const char* funcName) {
     Nan::HandleScope scope;
@@ -765,7 +766,7 @@ bool NodeMonitor::sendReport() {
     snprintf(buffer, sizeof(buffer), "\"jiffyperreq\":%.6f,", stats.lastJiffiesPerReq_);
     if (!strstr(buffer, "nan")) {
         data.append(buffer);
-    }	
+    }
 
     snprintf(buffer, sizeof(buffer), "\"events\":%d,", diff_count);
     data.append(buffer);
@@ -786,7 +787,7 @@ bool NodeMonitor::sendReport() {
         data.append(buffer);
     }
 
-    // requests served since beginning 
+    // requests served since beginning
     snprintf(buffer, sizeof(buffer), "\"reqstotal\":%d,", stats.lastRequests_);
     data.append(buffer);
 
@@ -816,7 +817,7 @@ bool NodeMonitor::sendReport() {
     snprintf(buffer, sizeof(buffer), "\"kbs_out\":%.2f,", stats.lastKBytesSecond);
     if (!strstr(buffer, "nan")) {
         data.append(buffer);
-    }	
+    }
 
     if (stats.healthStatusTimestamp_ != 0) {
         snprintf(buffer, sizeof(buffer), "\"health_status_timestamp\":%ld,", stats.healthStatusTimestamp_);
@@ -858,7 +859,7 @@ bool NodeMonitor::sendReport() {
     }
 
     data.erase(data.size() - 1);; //get rid of last comma
-    
+
     data.append("}}");
 
     // Construct the datagram pointing to the message
@@ -932,16 +933,16 @@ void LogStackTrace(Handle<Object> obj) {
         Local<Function> frameCountFunc = Local<Function>::Cast(frameCount);
         Local<Value> frameCountVal = frameCountFunc->Call(obj, 0, info);
         Local<Number> frameCountNum = frameCountVal->ToNumber();
-        
+
         cout << "Stack Trace:" << endl;
-        
+
         int totalFrames = frameCountNum->Value();
         for(int i = 0; i < totalFrames; i++) {
             Local<Value> frameNumber[] = {Nan::New<Number>(i)};
             Local<Value> setSelectedFrame = obj->Get(Nan::New<String>("setSelectedFrame").ToLocalChecked());
             Local<Function> setSelectedFrameFunc = Local<Function>::Cast(setSelectedFrame);
             setSelectedFrameFunc->Call(obj, 1, frameNumber);
-            
+
             Local<Value> frame = obj->Get(Nan::New<String>("frame").ToLocalChecked());
             Local<Function> frameFunc = Local<Function>::Cast(frame);
             Local<Value> frameVal = frameFunc->Call(obj, 0, info);
@@ -955,7 +956,7 @@ void LogStackTrace(Handle<Object> obj) {
     } catch(exception  e) {
         cerr << "Error occurred while logging stack trace:" << e.what() << endl;
     }
-    
+
 }
 
 #if (NODE_MODULE_VERSION > 0x000B)
@@ -976,8 +977,8 @@ static void DebugEventHandler(DebugEvent event,
 }
 #endif
 
-    
-/** Will install/uninstall DebugEventListeners 
+
+/** Will install/uninstall DebugEventListeners
  * \param install true => install, false => uninstall
  *
  * Since this ends up making isolate-modifying calls to v8
@@ -1005,7 +1006,7 @@ static void InstallDebugEventListeners(bool install) {
 #endif
     }
 }
-    
+
 static void SignalHangupActionHandler(int signo, siginfo_t* siginfo,  void* context) {
     savedSigInfo = *siginfo;
     hup_fired = 1;
@@ -1025,6 +1026,10 @@ static void SignalHangupActionHandler(int signo, siginfo_t* siginfo,  void* cont
 // Javascript getter/setters
 static NAN_GETTER(GetterIPCMonitorPath) {
     info.GetReturnValue().Set(Nan::New<String>(_ipcMonitorPath.c_str()).ToLocalChecked());
+}
+
+static NAN_GETTER(GetterReportInterval) {
+    info.GetReturnValue().Set(Nan::New<Number>(_reportInterval).ToLocalChecked());
 }
 
 static NAN_GETTER(GetterShowBackTrace) {
@@ -1047,6 +1052,15 @@ static NAN_METHOD(SetterIPCMonitorPath) {
     }
     String::Utf8Value ipcMonitorPath(info[0]);
     _ipcMonitorPath = *ipcMonitorPath;
+    info.GetReturnValue().SetUndefined();
+}
+
+static NAN_METHOD(SetterReportInterval) {
+    if (info.Length() < 1 ||
+        (!info[0]->IsNumber() && !info[0]->IsUndefined() && !info[0]->IsNull())) {
+        THROW_BAD_ARGS();
+    }
+    _reportInterval = info[0]->NumberValue();
     info.GetReturnValue().SetUndefined();
 }
 
@@ -1076,9 +1090,13 @@ NAN_MODULE_INIT(init) {
     Nan::SetAccessor( exports, Nan::New("ipcMonitorPath").ToLocalChecked(),
                       GetterIPCMonitorPath, 0, v8::Local<v8::Value>(),
                       v8::PROHIBITS_OVERWRITING, v8::DontDelete );
+    Nan::SetAccessor( exports, Nan::New("reportInterval").ToLocalChecked(),
+                      GetterReportInterval, 0, v8::Local<v8::Value>(),
+                      v8::PROHIBITS_OVERWRITING, v8::DontDelete );
     Nan::SetAccessor( exports, Nan::New("showBacktrace").ToLocalChecked(),
                       GetterShowBackTrace, SetterShowBackTrace );
     Nan::Export( exports, "setIpcMonitorPath", SetterIPCMonitorPath);
+    Nan::Export( exports, "setReportInterval", SetterReportInterval);
     Nan::Export( exports, "start", StartMonitor);
     Nan::Export( exports, "stop", StopMonitor);
 
